@@ -34,7 +34,6 @@ import (
 	"github.com/go-kit/kit/log/level"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
-	influx "github.com/influxdata/influxdb/client/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -43,32 +42,20 @@ import (
 	"github.com/prometheus/common/promlog/flag"
 	"gopkg.in/alecthomas/kingpin.v2"
 
-	"github.com/prometheus/prometheus/documentation/examples/remote_storage/remote_storage_adapter/graphite"
-	"github.com/prometheus/prometheus/documentation/examples/remote_storage/remote_storage_adapter/influxdb"
-	"github.com/prometheus/prometheus/documentation/examples/remote_storage/remote_storage_adapter/opentsdb"
 	"github.com/prometheus/prometheus/prompb"
 )
 
 type config struct {
-	graphiteAddress         string
-	graphiteTransport       string
-	graphitePrefix          string
-	opentsdbURL             string
-	influxdbURL             string
-	influxdbRetentionPolicy string
-	influxdbUsername        string
-	influxdbDatabase        string
-	influxdbPassword        string
-	clickhouseURL           string
-	clickhouseUsername      string
-	clickhousePassword      string
-	clickhouseDatabase      string
-	clickhouseTable       string
-	clickhouseCaPath      string
-	clickhouseReadTimeout time.Duration
-	clickhouseWriteTimeout  time.Duration
-	clickhouseAltHosts      string
-	remoteTimeout           time.Duration
+	url                string
+	username           string
+	password        string
+	database         string
+	table                 string
+	caPath                 string
+	readTimeout        time.Duration
+	writeTimeout  time.Duration
+	altHosts      string
+	remoteTimeout time.Duration
 	listenAddr              string
 	telemetryPath           string
 	promlogConfig           promlog.Config
@@ -118,8 +105,8 @@ func main() {
 
 	logger := promlog.New(&cfg.promlogConfig)
 
-	writers, readers := buildClients(logger, cfg)
-	if err := serve(logger, cfg.listenAddr, writers, readers); err != nil {
+	writer, reader := buildClient(logger, cfg)
+	if err := serve(logger, cfg.listenAddr, writer, reader); err != nil {
 		_ = level.Error(logger).Log("msg", "Failed to listen", "addr", cfg.listenAddr, "err", err)
 		os.Exit(1)
 	}
@@ -130,43 +117,26 @@ func parseFlags() *config {
 	a.HelpFlag.Short('h')
 
 	cfg := &config{
-		influxdbPassword:   os.Getenv("INFLUXDB_PW"),
-		clickhousePassword: os.Getenv("CLICKHOUSE_PW"),
-		promlogConfig:      promlog.Config{},
+		password:         os.Getenv("CLICKHOUSE_PW"),
+		promlogConfig:    promlog.Config{},
 	}
 
-	a.Flag("graphite-address", "The host:port of the Graphite server to send samples to. None, if empty.").
-		Default("").StringVar(&cfg.graphiteAddress)
-	a.Flag("graphite-transport", "Transport protocol to use to communicate with Graphite. 'tcp', if empty.").
-		Default("tcp").StringVar(&cfg.graphiteTransport)
-	a.Flag("graphite-prefix", "The prefix to prepend to all metrics exported to Graphite. None, if empty.").
-		Default("").StringVar(&cfg.graphitePrefix)
-	a.Flag("opentsdb-url", "The URL of the remote OpenTSDB server to send samples to. None, if empty.").
-		Default("").StringVar(&cfg.opentsdbURL)
-	a.Flag("influxdb-url", "The URL of the remote InfluxDB server to send samples to. None, if empty.").
-		Default("").StringVar(&cfg.influxdbURL)
-	a.Flag("influxdb.retention-policy", "The InfluxDB retention policy to use.").
-		Default("autogen").StringVar(&cfg.influxdbRetentionPolicy)
-	a.Flag("influxdb.username", "The username to use when sending samples to InfluxDB. The corresponding password must be provided via the INFLUXDB_PW environment variable.").
-		Default("").StringVar(&cfg.influxdbUsername)
-	a.Flag("influxdb.database", "The name of the database to use for storing samples in InfluxDB.").
-		Default("prometheus").StringVar(&cfg.influxdbDatabase)
-	a.Flag("clickhouse.url", "The URL of the remote Clickhouse server to send samples to. None, if empty.").
-		Default("").StringVar(&cfg.clickhouseURL)
-	a.Flag("clickhouse.username", "The username to use when sending samples to Clickhouse. The corresponding password must be provided via the CLICKHOUSE_PW environment variable.").
-		Default("").StringVar(&cfg.clickhouseUsername)
-	a.Flag("clickhouse.database", "The name of the database to use for storing samples in Clickhouse.").
-		Default("prometheus").StringVar(&cfg.clickhouseDatabase)
-	a.Flag("clickhouse.table", "The name of the table to use for storing samples in Clickhouse.").
-		Default("metrics").StringVar(&cfg.clickhouseTable)
-	a.Flag("clickhouse.ca-file-path", "Path to CA-certificate used to connect with TLS.").
-		Default("").StringVar(&cfg.clickhouseCaPath)
-	a.Flag("clickhouse.read-timeout", "The timeout to use when read metrics from the Clickhouse.").
-		Default("10s").DurationVar(&cfg.clickhouseReadTimeout)
-	a.Flag("clickhouse.write-timeout", "The timeout to use when write metrics to the Clickhouse.").
-		Default("10s").DurationVar(&cfg.clickhouseWriteTimeout)
-	a.Flag("clickhouse.althosts", "The CLuster URL of the remote Clickhouse server to send samples to. None, if empty.").
-		Default("").StringVar(&cfg.clickhouseAltHosts)
+	a.Flag("db.url", "The URL of the remote Clickhouse server to send samples to. None, if empty.").
+		Default("").StringVar(&cfg.url)
+	a.Flag("db.username", "The username to use when sending samples to Clickhouse. The corresponding password must be provided via the CLICKHOUSE_PW environment variable.").
+		Default("").StringVar(&cfg.username)
+	a.Flag("db.database", "The name of the database to use for storing samples in Clickhouse.").
+		Default("prometheus").StringVar(&cfg.database)
+	a.Flag("db.table", "The name of the table to use for storing samples in Clickhouse.").
+		Default("metrics").StringVar(&cfg.table)
+	a.Flag("db.ca-file-path", "Path to CA-certificate used to connect with TLS.").
+		Default("").StringVar(&cfg.caPath)
+	a.Flag("db.read-timeout", "The timeout to use when read metrics from the Clickhouse.").
+		Default("10s").DurationVar(&cfg.readTimeout)
+	a.Flag("db.write-timeout", "The timeout to use when write metrics to the Clickhouse.").
+		Default("10s").DurationVar(&cfg.writeTimeout)
+	a.Flag("db.althosts", "The CLuster URL of the remote Clickhouse server to send samples to. None, if empty.").
+		Default("").StringVar(&cfg.altHosts)
 	a.Flag("send-timeout", "The timeout to use when sending samples to the remote storage.").
 		Default("30s").DurationVar(&cfg.remoteTimeout)
 	a.Flag("web.listen-address", "Address to listen on for web endpoints.").
@@ -178,7 +148,7 @@ func parseFlags() *config {
 
 	_, err := a.Parse(os.Args[1:])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, errors.Wrapf(err, "Error parsing commandline arguments"))
+		_, _ = fmt.Fprintln(os.Stderr, errors.Wrapf(err, "Error parsing commandline arguments"))
 		a.Usage(os.Args[1:])
 		os.Exit(2)
 	}
@@ -186,104 +156,60 @@ func parseFlags() *config {
 	return cfg
 }
 
-type writer interface {
+type logWriter interface {
 	Write(samples model.Samples) error
 	Name() string
 }
 
-type reader interface {
+type logReader interface {
 	Read(req *prompb.ReadRequest) (*prompb.ReadResponse, error)
 	Name() string
 }
 
-func buildClients(logger log.Logger, cfg *config) ([]writer, []reader) {
-	var writers []writer
-	var readers []reader
-	if cfg.graphiteAddress != "" {
-		c := graphite.NewClient(
-			log.With(logger, "storage", "Graphite"),
-			cfg.graphiteAddress, cfg.graphiteTransport,
-			cfg.remoteTimeout, cfg.graphitePrefix)
-		writers = append(writers, c)
-	}
-	if cfg.opentsdbURL != "" {
-		c := opentsdb.NewClient(
-			log.With(logger, "storage", "OpenTSDB"),
-			cfg.opentsdbURL,
-			cfg.remoteTimeout,
-		)
-		writers = append(writers, c)
-	}
-	if cfg.influxdbURL != "" {
-		url, err := url.Parse(cfg.influxdbURL)
+func buildClient(logger log.Logger, cfg *config) (logWriter, logReader) {
+	options := make(url.Values)
+	options.Set("database", cfg.database)
+	options.Set("username", cfg.username)
+	options.Set("password", cfg.password)
+	options.Set("read_timeout", cfg.readTimeout.String())
+	options.Set("write_timeout", cfg.writeTimeout.String())
+	options.Set("alt_hosts", cfg.altHosts)
+	const tlsConfigKey = "clickhouse_tls_config_key"
+	if cfg.caPath != "" {
+		caCert, err := ioutil.ReadFile(cfg.caPath)
 		if err != nil {
-			_ = level.Error(logger).Log("msg", "Failed to parse InfluxDB URL", "url", cfg.influxdbURL, "err", err)
+			_ = level.Error(logger).Log("read ca-certificate", err)
 			os.Exit(1)
 		}
-		conf := influx.HTTPConfig{
-			Addr:     url.String(),
-			Username: cfg.influxdbUsername,
-			Password: cfg.influxdbPassword,
-			Timeout:  cfg.remoteTimeout,
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		err = clickhouse.RegisterTLSConfig(tlsConfigKey, &tls.Config{RootCAs: caCertPool})
+		if err != nil {
+			_ = level.Error(logger).Log("register tls config", err)
+			os.Exit(1)
 		}
-		c := influxdb.NewClient(
-			log.With(logger, "storage", "InfluxDB"),
-			conf,
-			cfg.influxdbDatabase,
-			cfg.influxdbRetentionPolicy,
-		)
-		prometheus.MustRegister(c)
-		writers = append(writers, c)
-		readers = append(readers, c)
+		options.Set("tls_config", tlsConfigKey)
+		options.Set("secure", "true")
 	}
-	if cfg.clickhouseURL != "" {
 
-		options := make(url.Values)
-		options.Set("database", cfg.clickhouseDatabase)
-		options.Set("username", cfg.clickhouseUsername)
-		options.Set("password", cfg.clickhousePassword)
-		options.Set("read_timeout", cfg.clickhouseReadTimeout.String())
-		options.Set("write_timeout", cfg.clickhouseWriteTimeout.String())
-		options.Set("alt_hosts", cfg.clickhouseAltHosts)
-		const tlsConfigKey = "clickhouse_tls_config_key"
-		if cfg.clickhouseCaPath != "" {
-			caCert, err := ioutil.ReadFile(cfg.clickhouseCaPath)
-			if err != nil {
-				_ = level.Error(logger).Log("read ca-certificate", err)
-				os.Exit(1)
-			}
-			caCertPool := x509.NewCertPool()
-			caCertPool.AppendCertsFromPEM(caCert)
-			err = clickhouse.RegisterTLSConfig(tlsConfigKey, &tls.Config{RootCAs: caCertPool})
-			if err != nil {
-				_ = level.Error(logger).Log("register tls config", err)
-				os.Exit(1)
-			}
-			options.Set("tls_config", tlsConfigKey)
-			options.Set("secure", "true")
-		}
+	dsn := (&url.URL{
+		Scheme:   "tcp",
+		Host:     cfg.url,
+		RawQuery: options.Encode(),
+	}).String()
 
-		dsn := (&url.URL{
-			Scheme:   "tcp",
-			Host:     cfg.clickhouseURL,
-			RawQuery: options.Encode(),
-		}).String()
-
-		c := client.New(
-			log.With(logger, "storage", "Clickhouse"),
-			dsn,
-			cfg.clickhouseDatabase,
-			cfg.clickhouseTable,
-		)
-		prometheus.MustRegister(c)
-		writers = append(writers, c)
-		readers = append(readers, c)
-	}
+	c := client.New(
+		log.With(logger, "storage", "Clickhouse"),
+		dsn,
+		cfg.database,
+		cfg.table,
+	)
+	prometheus.MustRegister(c)
 	_ = level.Info(logger).Log("msg", "Starting up...")
-	return writers, readers
+	return c, c
 }
 
-func serve(logger log.Logger, addr string, writers []writer, readers []reader) error {
+func serve(logger log.Logger, addr string, writer logWriter, reader logReader) error {
 	http.HandleFunc("/write", func(w http.ResponseWriter, r *http.Request) {
 		compressed, err := ioutil.ReadAll(r.Body)
 		if err != nil {
@@ -310,13 +236,11 @@ func serve(logger log.Logger, addr string, writers []writer, readers []reader) e
 		receivedSamples.Add(float64(len(samples)))
 
 		var wg sync.WaitGroup
-		for _, w := range writers {
-			wg.Add(1)
-			go func(rw writer) {
-				sendSamples(logger, rw, samples)
-				wg.Done()
-			}(w)
-		}
+		wg.Add(1)
+		go func(writer logWriter) {
+			sendSamples(logger, writer, samples)
+			wg.Done()
+		}(writer)
 		wg.Wait()
 	})
 
@@ -341,13 +265,6 @@ func serve(logger log.Logger, addr string, writers []writer, readers []reader) e
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-
-		// TODO: Support reading from more than one reader and merging the results.
-		if len(readers) != 1 {
-			http.Error(w, fmt.Sprintf("expected exactly one reader, found %d readers", len(readers)), http.StatusInternalServerError)
-			return
-		}
-		reader := readers[0]
 
 		var resp *prompb.ReadResponse
 		resp, err = reader.Read(&req)
@@ -394,7 +311,7 @@ func protoToSamples(req *prompb.WriteRequest) model.Samples {
 	return samples
 }
 
-func sendSamples(logger log.Logger, w writer, samples model.Samples) {
+func sendSamples(logger log.Logger, w logWriter, samples model.Samples) {
 	begin := time.Now()
 	err := w.Write(samples)
 	duration := time.Since(begin).Seconds()
