@@ -18,9 +18,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go"
-	_ "github.com/ClickHouse/clickhouse-go"
-	"github.com/EinKrebs/prometheus-clickhouse/client"
 	"io/ioutil"
 	"net/http"
 	_ "net/http/pprof"
@@ -29,6 +26,10 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go"
+	_ "github.com/ClickHouse/clickhouse-go"
+	"github.com/EinKrebs/prometheus-clickhouse/client"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -46,19 +47,19 @@ import (
 )
 
 type config struct {
-	url                string
-	username           string
-	password        string
-	database         string
-	table                 string
-	caPath                 string
-	readTimeout        time.Duration
+	url           string
+	username      string
+	password      string
+	database      string
+	table         string
+	caPath        string
+	readTimeout   time.Duration
 	writeTimeout  time.Duration
 	altHosts      string
 	remoteTimeout time.Duration
-	listenAddr              string
-	telemetryPath           string
-	promlogConfig           promlog.Config
+	listenAddr    string
+	telemetryPath string
+	promlogConfig promlog.Config
 }
 
 var (
@@ -117,8 +118,8 @@ func parseFlags() *config {
 	a.HelpFlag.Short('h')
 
 	cfg := &config{
-		password:         os.Getenv("CLICKHOUSE_PW"),
-		promlogConfig:    promlog.Config{},
+		password:      os.Getenv("CLICKHOUSE_PW"),
+		promlogConfig: promlog.Config{},
 	}
 
 	a.Flag("db.url", "The URL of the remote Clickhouse server to send samples to. None, if empty.").
