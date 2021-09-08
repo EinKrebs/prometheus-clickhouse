@@ -69,3 +69,7 @@ remote_write:
 remote_read:
   - url: "http://localhost:9201/read"
 ```
+
+## Credits
+
+This project is based on https://github.com/weetime/remote_storage_adapter.
